@@ -1,0 +1,64 @@
+{{- if .Values.flyway.enabled }}
+# Schema migration as an Argo CD PreSync hook: it runs to completion BEFORE the
+# Deployment rolls, so a new image never starts against an old schema.
+# This is ordering Argo owns — Kustomize cannot express it (IRD-017 §Ordering).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "app.name" . }}-flyway
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    # Delete the previous hook Job only once the new one succeeds, so a failed
+    # migration leaves its pod and logs behind to debug.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "app.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: flyway
+          image: {{ printf "%s:%s" (required "flyway.image is required when flyway.enabled" .Values.flyway.image) (required "flyway.tag is required when flyway.enabled" .Values.flyway.tag) }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          envFrom:
+            - secretRef:
+                name: {{ required "flyway.secretName is required when flyway.enabled" .Values.flyway.secretName }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "app.name" . }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "app.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      # Named target port, not a number: the ServiceMonitor and both probes
+      # reference `http` too, so a port change is a one-line values edit.
+      targetPort: http
+      protocol: TCP

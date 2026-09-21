@@ -1,0 +1,26 @@
+{{- if .Values.metrics.enabled }}
+# Requires the prometheus-operator CRDs, which arrive with kube-prometheus-stack
+# at D14 (sync wave -3). Rendering it earlier is harmless for `kustomize build`
+# — Argo will simply report it OutOfSync until the CRD exists.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "app.name" . }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+    # kube-prometheus-stack only adopts ServiceMonitors carrying its release
+    # label unless serviceMonitorSelectorNilUsesHelmValues=false (set at D14).
+    release: kube-prometheus-stack
+  annotations:
+    # Wave 1: monitoring attaches AFTER the workload it scrapes exists (IRD-017).
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.metrics.path }}
+      interval: {{ .Values.metrics.interval }}
+      scheme: http
+{{- end }}

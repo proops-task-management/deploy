@@ -1,0 +1,66 @@
+# DEPRECATION, recorded 2026-09-21 rather than discovered at an upgrade.
+# kyverno 1.19.1 emits: "kyverno.io/v1 ClusterPolicy is deprecated and will be
+# removed in a future release; migrate to ValidatingPolicy, MutatingPolicy,
+# GeneratingPolicy or ImageValidatingPolicy (policies.kyverno.io)".
+# It still works — deprecated, not removed — and `kyverno apply` validates these
+# correctly today (proven: a planted violation fails 5/5 rules, exit 1).
+# Migration to the CEL-based ValidatingPolicy is tracked in Linear, deliberately
+# NOT done here: it would land an unverified rewrite of the admission rules in
+# the same change that first introduces them. Ship the working form, migrate as
+# its own reviewed change. https://kyverno.io/docs/guides/migration-to-cel/
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow latest tag
+    policies.kyverno.io/category: Supply chain
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Every container image must carry an explicit, immutable tag. `:latest` —
+      or no tag at all, which Kubernetes resolves to `:latest` — makes the
+      running version unknowable: two pods of the same Deployment can be on
+      different code, and a rollback has nothing to roll back TO. IRD-007 /
+      IRD-021. This is the admission-time half of a rule also enforced at render
+      time by charts/app/values.schema.json.
+    # Sync wave -2: policies must exist before the workloads they judge (IRD-017).
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  # AUDIT AT D12 — NOT Enforce. This is deliberate and has a date attached:
+  # IRD-017/DOP-012 schedule `validationFailureAction: Enforce` for D17, after
+  # the services are actually running via GitOps (D16). Turning it on before
+  # there is anything to admit would make the first real deploy the first test
+  # of the policy, which is the wrong order to learn in.
+  #
+  # The CI `policy` job does NOT care about this field: `kyverno apply` reports
+  # every violation regardless of Audit/Enforce. So the PR gate is strict from
+  # day one even while the cluster is still only watching. That is the useful
+  # asymmetry — block it in review, observe it in the cluster, then enforce.
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "An image tag is required — an untagged image resolves to :latest."
+        pattern:
+          spec:
+            containers:
+              - image: "*:*"
+
+    - name: validate-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Using the :latest tag is not allowed — reference the immutable SHA the overlay sets."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"

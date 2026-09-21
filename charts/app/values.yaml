@@ -1,0 +1,124 @@
+# ---------------------------------------------------------------------------
+# app chart — default values (IRD-017 §"The `app` chart — values schema")
+#
+# These are the SAFE defaults. A service only overrides what differs.
+# Anything security-relevant (pod security context, capability drop, seccomp)
+# is NOT here — it is hardcoded in the templates so it cannot be weakened by a
+# values file, and so the output passes Kyverno by construction (IRD-021).
+# ---------------------------------------------------------------------------
+
+service:
+  name: ""          # REQUIRED — set per service, e.g. user-service
+  port: 80          # the Service port (what other pods dial)
+  targetPort: 8080  # the container port
+
+image:
+  repository: ""    # REQUIRED — e.g. ghcr.io/proops-task-management/user-service
+  tag: ""           # ALWAYS overridden by the overlay's `images:` (immutable SHA).
+                    # Empty on purpose: a missing tag must fail loudly, never
+                    # silently resolve to :latest (Kyverno disallow-latest-tag).
+
+# Private registry pull — ADR-013 / IRD-017 §Rules.
+# The FIELD is wired here at D12; the dockerconfigjson Secret itself is
+# materialized per namespace by ESO from SSM at D13 (IRD-019).
+imagePullSecrets:
+  - name: ghcr-pull
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  port: http                                  # named port — survives a port change
+  path: /actuator/health/liveness             # frontend overrides to /
+  readinessPath: /actuator/health/readiness   # frontend overrides to /
+  startupPath: ""                             # defaults to `path` when empty
+  initialDelaySeconds: 0                      # startupProbe covers slow boot instead
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+  startup:
+    periodSeconds: 5
+    failureThreshold: 24                      # 24 × 5s = 120s budget for JVM boot
+
+ingress:
+  enabled: false
+  className: traefik
+  host: ""
+  path: /
+  pathType: Prefix
+  tls: true
+  clusterIssuer: letsencrypt-prod             # cert-manager (D13)
+
+hpa:
+  enabled: false
+  min: 1
+  max: 3
+  targetCPU: 70
+
+# Non-secret config only (cluster DNS URLs, feature flags, log levels).
+# Anything secret goes through envFromSecret / ESO — never here.
+env: []
+# - name: SPRING_PROFILES_ACTIVE
+#   value: dev
+
+# Secret names materialized by ESO (IRD-019). Mounted as envFrom.
+envFromSecret: []
+# - user-service-secrets
+
+# Renders the ExternalSecret CR that CREATES the secret named above.
+# Off at D12 — the ClusterSecretStore it points at arrives with ESO at D13.
+externalSecret:
+  enabled: false
+  storeName: aws-ssm
+  remoteKey: ""                # e.g. /proops/dev/user-service
+  targetName: ""               # defaults to <service>-secrets
+  refreshInterval: 1h
+
+metrics:
+  enabled: true
+  path: /actuator/prometheus
+  port: http
+  interval: 30s
+  # ServiceMonitor is only rendered when the prometheus-operator CRD exists
+  # (arrives with kube-prometheus-stack at D14). Gated by `metrics.enabled`.
+
+# Backends with a database render a Flyway migration Job as an Argo PreSync
+# hook (wave 0, before the Deployment rolls). Off by default: the frontend and
+# the gateway have no schema.
+flyway:
+  enabled: false
+  image: ""             # e.g. ghcr.io/proops-task-management/user-service-flyway
+  tag: ""
+  secretName: ""        # ESO-materialized DB credentials
+
+gracefulShutdown:
+  terminationGracePeriodSeconds: 30
+
+# PodDisruptionBudget — real HA behaviour for the D22 node-loss drill.
+# minAvailable is deliberately NOT set alongside maxUnavailable: setting both
+# is invalid. With replicaCount 1, maxUnavailable: 1 permits voluntary eviction
+# (a drain would otherwise hang forever); raise replicas and this still holds.
+pdb:
+  enabled: true
+  maxUnavailable: 1
+
+# Soft anti-affinity — spread replicas across the 2 nodes when possible, but
+# never block scheduling on a 2-node cluster (hard affinity would leave pods
+# Pending the moment replicas > nodes).
+antiAffinity:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+
+# Extra pod/deployment annotations (e.g. Argo sync-wave overrides).
+podAnnotations: {}
+annotations: {}
+
+nodeSelector: {}
+tolerations: []

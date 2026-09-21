@@ -1,0 +1,42 @@
+# Dependabot for the deploy repo (IRD-015 §Dependabot standard · MIN-41).
+#
+# WHY THIS FILE EXISTS: this repo pins third-party actions directly in its own
+# workflows (checkout, paths-filter) — pins that moving cicd-platform's @v6 tag
+# never touches. Without a bot here, nothing proposes a bump when those actions
+# move, which is how iac-platform ended up still on Node-20 majors weeks before
+# GitHub removed Node 20 from runners.
+#
+# ONE DIRECTORY: this repo has no composite actions, so "/" (.github/workflows/)
+# is the whole surface Dependabot can see.
+#
+# WHAT DEPENDABOT CANNOT SEE HERE — stated plainly, because it is a real gap and
+# not a small one. IRD-017 §Sync policy says infra chart version bumps "arrive
+# as PRs (Renovate/Dependabot on this repo)". That is not achievable with
+# Dependabot as configured: Dependabot's `helm` ecosystem reads Chart.yaml
+# `dependencies:`, and this repo pins upstream chart versions inside
+# kustomization.yaml `helmCharts:` blocks instead (the IRD-017 tool split —
+# Kustomize inflates, Helm shapes). Dependabot does not parse those.
+#
+# So from D13, when infra/ starts carrying pinned upstream charts
+# (kube-prometheus-stack, cert-manager, ESO, Kyverno, Loki, Tempo…), THOSE PINS
+# WILL HAVE NO UPDATE SIGNAL AT ALL unless something is done. Two options, to be
+# decided before D13 lands the first pinned chart, not after:
+#   1. Renovate — its `kustomize` manager DOES understand `helmCharts:`.
+#      Costs a second bot in the org.
+#   2. A scheduled workflow that diffs each pinned version against the upstream
+#      repo's latest and opens an issue. More code, no new dependency.
+# Recorded here rather than left implicit — an unpinned-but-unwatched chart
+# version is the same shape as MIN-13's deferred decision.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # Majors are NOT grouped: this repo's workflows gate what reaches a live
+      # cluster, so each major is read and reviewed on its own.
+      all-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"

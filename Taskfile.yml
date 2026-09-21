@@ -1,0 +1,78 @@
+# Taskfile.yml — local task runner for the deploy repo (go-task: https://taskfile.dev)
+# Wraps the same gates CI runs, so a contributor reproduces them before pushing.
+# Install go-task: `brew install go-task`. List tasks: `task` or `task --list`.
+#
+# CI remains the enforced gate (IRD-015/IRD-021); this is the fast local mirror
+# (IRD-014 hygiene). That sentence is a claim, so .pre-commit-config.yaml carries
+# a PER-TOOL parity table naming the CI job each hook maps to — a blanket "same
+# tools as CI" assertion was found false twice in this program (MIN-60, MIN-63)
+# and is not used here.
+#
+# DELIBERATELY ABSENT: anything that applies to a cluster. No `kubectl apply`,
+# no `argocd app sync`, no `helm install`. In GitOps the ONLY way a manifest
+# reaches the cluster is a merge to main — a convenience alias that bypasses
+# that is drift by construction, and Argo's selfHeal would revert it anyway
+# while you wondered why (IRD-017 §Rules).
+
+version: "3"
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  hooks:
+    desc: Install the git pre-commit hooks (run once per clone — until then commits are NOT linted)
+    cmds:
+      - pre-commit install
+
+  lint:
+    desc: All pre-commit hooks (gitleaks + yamllint + actionlint + check-action-pins + helm-lint + render-validate)
+    cmds:
+      - pre-commit run --all-files
+
+  render:
+    desc: Render every overlay + kubeconform — the build this repo does not otherwise have
+    cmds:
+      - ./scripts/render-all.sh
+
+  show:
+    desc: "Print one target's rendered manifests, e.g. task show -- apps/frontend-service/base"
+    cmds:
+      - kustomize build --enable-helm {{.CLI_ARGS}}
+
+  policy:
+    desc: Run the cluster's own Kyverno policies against every rendered manifest (needs `brew install kyverno`)
+    cmds:
+      # Mirrors deploy-pr-opened.yml's `policy` job, against the SAME policy
+      # files Argo installs — infra/kyverno/policies/, not a private copy.
+      - RENDER_DIR=rendered KEEP_RENDER=true ./scripts/render-all.sh > /dev/null
+      - kyverno apply infra/kyverno/policies/ --resource rendered/ --detailed-results --table
+      - rm -rf rendered
+
+  chart-lint:
+    desc: Lint the shared app chart only (template syntax + Chart.yaml validity)
+    cmds:
+      - helm lint charts/app --set service.name=lint --set image.repository=lint --set image.tag=v0
+
+  yamllint:
+    desc: Lint YAML style only (uses .yamllint.yaml; charts/*/templates/ is excluded — Go templating is not YAML)
+    cmds:
+      - pre-commit run yamllint --all-files
+
+  actionlint:
+    desc: Validate GitHub Actions workflow syntax + expressions only
+    cmds:
+      - pre-commit run actionlint --all-files
+
+  secrets:
+    desc: Scan for committed secrets only (gitleaks) — matters most here, this repo is PUBLIC
+    cmds:
+      - pre-commit run gitleaks --all-files
+
+  update-hooks:
+    desc: Bump pinned pre-commit hook versions to latest (review the diff, and bump the CI twin in the SAME commit)
+    cmds:
+      - pre-commit autoupdate

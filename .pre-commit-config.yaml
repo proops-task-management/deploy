@@ -1,0 +1,103 @@
+# .pre-commit-config.yaml — deploy repo
+# Local gate, mirroring cicd-platform's and iac-platform's. Install once:
+#   pre-commit install          # then hooks run on every `git commit`
+#   pre-commit run --all-files  # one-off full sweep
+#
+# CI PARITY — stated per tool, never as a blanket claim. The blanket form
+# ("same tools + pins as CI") was found FALSE twice in this program (MIN-60,
+# MIN-63) and is now a standing prohibition: a parity claim nobody can check is
+# itself the defect. So the truth is tabulated.
+#
+#   hook            | in-CI counterpart                     | pinned in lockstep?
+#   ----------------|---------------------------------------|--------------------
+#   gitleaks        | secret-scan.yml — OWN workflow, no     | yes — 8.18.4
+#                   | paths: filter                          |
+#   yamllint        | deploy-pr-opened: manifest-lint        | yes — 1.35.1
+#   actionlint      | deploy-pr-opened: workflow-lint        | yes — 1.7.1
+#   check-action-pins | action-pins.yml — OWN workflow       | STRUCTURAL — one
+#                   |                                        | script, lives in
+#                   |                                        | cicd-platform
+#   helm-lint       | deploy-pr-opened: chart-lint           | NO — PATH helm vs
+#                   |                                        | CI 3.16.4; accepted
+#   render-validate | deploy-pr-opened: render + validate    | STRUCTURAL — one
+#                   |                                        | script (see below)
+#
+# THE LAST ROW IS THE IMPORTANT ONE. `scripts/render-all.sh` is executed by BOTH
+# this hook and the CI job, exactly as iac-platform does with
+# lint-brace-guard.sh. Lockstep is structural (one file) rather than two version
+# pins someone must remember to bump together — which is the only form of
+# lockstep that has actually held in this program.
+#
+# WHY THIS REPO NEEDS A RENDER GATE AT ALL, unlike the others: there is no
+# compiler here. A service repo fails at `mvn test`; iac-platform fails at
+# `terraform plan`. A malformed kustomization.yaml or a Kyverno-violating
+# manifest merges perfectly clean and fails INSIDE THE CLUSTER at sync time —
+# where `selfHeal: true` on dev will retry it forever. The render IS the build.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      # Matters more here than in any other repo: this one is PUBLIC git
+      # (IRD-017 §Bootstrap — Argo needs no repo secret), so a leaked credential
+      # is harvested by scrapers within minutes, not discovered at leisure.
+      - id: gitleaks
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: ["-c", ".yamllint.yaml"]
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.1
+    hooks:
+      - id: actionlint
+
+  # Third-party `uses:` must be a full commit SHA + `# vX.Y.Z` (MIN-65). The
+  # implementation lives ONCE, in cicd-platform, and is consumed here through
+  # its .pre-commit-hooks.yaml — copying it would create the drift MIN-65
+  # exists to prevent.
+  #
+  # `rev:` IS AN IMMUTABLE TAG ON PURPOSE, unlike the @v6 the CI side consumes:
+  # pre-commit resolves a ref at install time and caches it, so a moving tag
+  # would leave every clone on whatever @v6 meant the day it was installed.
+  # Dependabot does not update pre-commit revs — bump this by hand when @v6 moves.
+  - repo: https://github.com/proops-task-management/cicd-platform
+    rev: v6.7
+    hooks:
+      - id: check-action-pins
+
+  - repo: local
+    hooks:
+      # `language: system` — a deliberate exception to "every tool lives in a
+      # pre-commit-managed env". helm and kustomize are already HARD operator
+      # prerequisites for this repo: you cannot render, review or debug a single
+      # change here without them. Adding them as managed deps would install a
+      # second copy of tools that must already be present.
+      # Accepted residual, stated rather than hidden: local helm/kustomize are
+      # unpinned against CI's. Both are stable across minors for `lint` and
+      # `build`; the CI job remains the enforced gate.
+      - id: helm-lint
+        name: helm lint (charts/app — template syntax + Chart.yaml validity)
+        entry: helm lint charts/app --set service.name=lint --set image.repository=lint --set image.tag=v0
+        language: system
+        files: ^charts/
+        pass_filenames: false
+
+      # THE GATE THAT REPLACES THE MISSING COMPILER.
+      # Renders EVERY base and overlay and validates the output. Same script the
+      # CI `render` + `validate` jobs run — one implementation, two call sites.
+      #
+      # `always_run: true`, NOT `files: ^(charts|apps)/` — pre-commit never hands
+      # DELETED files to a hook, so with a `files:` filter a commit whose only
+      # change is REMOVING an overlay would skip the gate entirely ("no files to
+      # check"). That is precisely the change most likely to break a render: the
+      # deleted file is the one something else still references. Same finding as
+      # iac-platform's terraform-fmt/tflint hooks (MIN-69).
+      - id: render-validate
+        name: render every overlay + kubeconform (the build this repo doesn't have)
+        entry: scripts/render-all.sh
+        language: script
+        always_run: true
+        pass_filenames: false
+        verbose: true

@@ -1,0 +1,94 @@
+# DEPRECATION: see the note in disallow-latest-tag.yaml — kyverno.io/v1
+# ClusterPolicy is deprecated as of 1.19; migration to policies.kyverno.io
+# ValidatingPolicy is tracked in Linear as its own change.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-pod-hardening
+  annotations:
+    policies.kyverno.io/title: Require hardened pod security
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Workloads must run as a non-root user, drop ALL Linux capabilities, refuse
+      privilege escalation and use the RuntimeDefault seccomp profile. IRD-021.
+      The app chart (charts/app) hardcodes all four rather than exposing them in
+      values.yaml, so a conforming workload passes this policy BY CONSTRUCTION —
+      this policy exists to catch what does not come from that chart: a
+      hand-written manifest, an upstream infra chart's defaults, or a future
+      values file that finds a way around the template.
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  # Audit at D12, Enforce at D17 — same reasoning as disallow-latest-tag.
+  # KNOWN CONSEQUENCE, recorded rather than discovered later: frontend-service
+  # currently runs nginx as ROOT (Trivy DS-0002, Linear MIN-38). It will violate
+  # this policy the moment it is deployed. That is not a reason to weaken the
+  # rule — MIN-38 is High priority and blocks D16 precisely because of it.
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-run-as-non-root
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "runAsNonRoot must be true (pod or every container)."
+        anyPattern:
+          - spec:
+              securityContext:
+                runAsNonRoot: true
+          - spec:
+              containers:
+                - securityContext:
+                    runAsNonRoot: true
+
+    - name: require-drop-all-capabilities
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Every container must drop ALL capabilities."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  capabilities:
+                    drop:
+                      - ALL
+
+    - name: disallow-privilege-escalation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "allowPrivilegeEscalation must be false on every container."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+
+    - name: require-seccomp-runtime-default
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "seccompProfile.type must be RuntimeDefault (pod or every container)."
+        anyPattern:
+          - spec:
+              securityContext:
+                seccompProfile:
+                  type: RuntimeDefault
+          - spec:
+              containers:
+                - securityContext:
+                    seccompProfile:
+                      type: RuntimeDefault

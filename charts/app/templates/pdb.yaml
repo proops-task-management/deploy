@@ -1,0 +1,17 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "app.name" . }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  # maxUnavailable (not minAvailable): with replicaCount 1, `minAvailable: 1`
+  # would block every voluntary eviction and hang `kubectl drain` forever.
+  # maxUnavailable keeps drains working while still forcing the eviction API
+  # to respect the rollout — which is what the D22 node-loss drill exercises.
+  maxUnavailable: {{ .Values.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+{{- end }}

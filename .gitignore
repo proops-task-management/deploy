@@ -1,0 +1,48 @@
+# deploy repo — .gitignore
+#
+# This repo is PUBLIC git (IRD-017 §Bootstrap: Argo CD needs no repo secret), so
+# the cost of an accidental commit is higher here than anywhere else in the
+# program. gitleaks is the real gate (secret-scan.yml, unfiltered); this file
+# just keeps the obvious things out of a `git add .`.
+
+# ---- Helm ----
+# Dependency charts pulled by `helm dependency update` / kustomize's --enable-helm.
+# Vendored chart tarballs are build output, not source; the pinned version in
+# Chart.yaml / kustomization.yaml IS the source of truth.
+charts/*/charts/
+charts/**/*.tgz
+# NOTE: Chart.lock is intentionally NOT ignored — commit it so dependency
+# versions are reproducible across machines and CI (same rule as
+# iac-platform's .terraform.lock.hcl).
+
+# ---- Kustomize / render output ----
+# `kustomize build ... > out.yaml` while debugging. The rendered manifests are
+# derived state — Argo re-renders from source on every sync. Committing them
+# would create a second source of truth that silently goes stale.
+rendered/
+*.rendered.yaml
+out.yaml
+
+# ---- Cluster credentials ----
+# Nothing here should ever hold a kubeconfig, but the k3s one is fetched to a
+# working dir during D12's bootstrap and a stray copy must never land in a
+# PUBLIC repo.
+kubeconfig
+*.kubeconfig
+.kube/
+
+# ---- Secrets ----
+# ESO materializes real secrets INTO the cluster from SSM (IRD-019); this repo
+# only ever holds ExternalSecret CRs, which contain references, not values.
+# A file matching these patterns means something went wrong.
+*.env
+!*.env.example
+secrets.yaml
+*-secret.yaml
+!*-externalsecret.yaml
+
+# ---- OS / editor ----
+.DS_Store
+*.swp
+.idea/
+.vscode/

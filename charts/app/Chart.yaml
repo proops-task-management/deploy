@@ -1,0 +1,20 @@
+apiVersion: v2
+name: app
+description: >-
+  Shared application chart for every PROOPS task-management service.
+  One template, five values files. Governed by IRD-017 (GitOps deploy platform).
+  NOTE: type is `application`, not `library` — Kustomize inflates this chart via
+  `helmCharts:` + `--enable-helm`, which requires a renderable chart. "Library
+  chart" in IRD-017 means "the one shared chart", not Helm's `type: library`.
+type: application
+
+# Bumping this version is a PLATFORM-WIDE rollout across all 5 services.
+# Deliberate act — never bump it as a side effect of a service change (IRD-017).
+version: 0.1.0
+
+# Not meaningful here: each service pins its own image tag via the overlay's
+# `images:` (immutable SHA). Kept at 1.0.0 so `helm lint` stays quiet.
+appVersion: "1.0.0"
+
+maintainers:
+  - name: minh_dt

@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Kustomize INFLATES the shared chart — it does not template it.
+# `kustomize build --enable-helm` shells out to helm, renders charts/app with
+# values-common.yaml, and hands the resulting manifests to the overlay to patch.
+# Ordering is NOT expressed here; Argo CD sync waves own that (IRD-017).
+helmGlobals:
+  chartHome: ../../../charts
+
+helmCharts:
+  - name: app
+    releaseName: frontend-service
+    valuesFile: values-common.yaml

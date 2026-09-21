@@ -1,0 +1,52 @@
+# frontend-service — values that are TRUE IN EVERY ENVIRONMENT.
+# Anything that differs per env (replicas, host, image SHA) belongs in the
+# overlay, never here. Validated against charts/app/values.schema.json.
+
+service:
+  name: frontend-service
+  port: 80
+  targetPort: 80        # nginx
+
+image:
+  repository: ghcr.io/proops-task-management/frontend-service
+  # Placeholder only. The overlay's `images:` transformer rewrites this to the
+  # immutable SHA that CI pushed. It must not be `latest` (schema + Kyverno).
+  tag: placeholder
+
+replicaCount: 1
+
+# nginx serving a static bundle — an order of magnitude lighter than the JVMs.
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+# No Actuator here: this is nginx, not Spring Boot. Root path is the health signal.
+probes:
+  port: http
+  path: /
+  readinessPath: /
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+  startup:
+    periodSeconds: 5
+    failureThreshold: 12     # static assets, no JVM warm-up: 60s is plenty
+
+# The only internet-facing service. Host is set per environment in the overlay.
+ingress:
+  enabled: false
+
+# No /actuator/prometheus on nginx. Metrics arrive at D19 via the
+# nginx-exporter sidecar (see monitoring/frontend-metrics-patch.yaml).
+metrics:
+  enabled: false
+
+flyway:
+  enabled: false           # no schema
+
+gracefulShutdown:
+  terminationGracePeriodSeconds: 30

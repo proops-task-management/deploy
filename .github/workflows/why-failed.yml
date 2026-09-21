@@ -1,0 +1,37 @@
+name: Why Failed — Agent B relay
+
+# Thin caller: a MEMBER/OWNER comments `/why-failed` on a PR -> delegate to the
+# platform's reusable relay (IRD-022 Agent B). It resolves the PR's latest
+# failed run and POSTs it to vars.FLEET_URL/ci-failed. Self-skips until
+# FLEET_URL is a real value (D21).
+#
+# GOTCHA: issue_comment workflows always run from the DEFAULT branch, so this
+# must be on main to fire at all.
+#
+# WHY THIS REPO EARNS IT (the question is worth answering, because
+# cicd-platform's absence of this file is a real and deliberate-until-recently
+# exception — see MIN-70): failures here are HARDER to read than a compiler's,
+# not easier. A values-schema violation renders as:
+#
+#   Error: values don't meet the specifications of the schema(s)...
+#   - image.tag: Must not validate the schema (not)
+#   : unable to run: 'helm template ... -f /tmp/kustomize-helm-943645229/...'
+#     (is 'helm' installed?): exit status 1
+#
+# Three problems in one message: the JSON-Schema phrasing never says "tag must
+# not be latest"; the file named is a DELETED temp file, not the
+# values-common.yaml that is actually wrong; and the closing "(is 'helm'
+# installed?)" sends the reader to reinstall a tool that is working fine.
+# Kyverno policy output has the same quality. This is exactly the failure shape
+# Agent B exists to translate.
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  why-failed:
+    if: ${{ github.event.issue.pull_request != null && contains(github.event.comment.body, '/why-failed') }}
+    permissions:
+      actions: read
+      pull-requests: write
+    uses: proops-task-management/cicd-platform/.github/workflows/reusable-why-failed.yml@v6

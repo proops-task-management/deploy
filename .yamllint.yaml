@@ -1,0 +1,54 @@
+# .yamllint.yaml — deploy repo. Based on cicd-platform's @v6 config, with ONE
+# structural difference that matters more here than anywhere else in the program.
+extends: default
+
+# THE CRITICAL IGNORE — charts/*/templates/ is NOT YAML.
+# A Helm template is Go text/template that HAPPENS to look like YAML:
+#
+#   {{- if .Values.pdb.enabled }}
+#   maxUnavailable: {{ .Values.pdb.maxUnavailable }}
+#
+# Line 1 is not a YAML node at all, and line 2's value is not a scalar until Helm
+# renders it. yamllint parses bytes, not intent, so pointing it at templates/
+# produces a wall of syntax errors on files that are perfectly correct. This is
+# the #1 way a YAML linter gets disabled entirely in a Helm repo — the ignore is
+# narrow and deliberate so the rest of the repo stays linted.
+#
+# What still guards templates/, so this is not a hole:
+#   - `helm lint charts/app`   — parses them AS templates (chart-lint job)
+#   - `kustomize build`        — renders them and fails on malformed output
+#   - `kubeconform`            — validates the rendered result against k8s schemas
+# The rendered output is the thing that reaches the cluster, and it IS checked.
+ignore: |
+  charts/*/templates/
+  charts/*/charts/
+
+rules:
+  # Argo CD Application specs and kustomize image lines routinely exceed 80 and
+  # cannot wrap. Warn past 120 so runaway lines still surface, never error.
+  line-length:
+    max: 120
+    level: warning
+
+  # YAML 1.1 reads on/off/yes/no as booleans. Allow the canonical set so keys
+  # like `on:` in a workflow are not flagged, while real typos still are.
+  truthy:
+    allowed-values: ["true", "false", "on", "off"]
+    check-keys: true
+
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+
+  comments:
+    min-spaces-from-content: 1   # `key: val  # note` is fine; default demands 2
+
+  # Unlike iac-platform, this repo does NOT relax `colons`. That relaxation
+  # exists there for column-aligned Ansible group_vars. Nothing here is aligned,
+  # so the stricter default stands — a deviation is only worth carrying when
+  # something actually needs it.
+
+  # Values files are dense and benefit from blank-line grouping; the default
+  # (max 2) is already right. Stated so nobody "fixes" it later.
+  empty-lines:
+    max: 2

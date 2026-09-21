@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "app.name" . }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0        # never go below current capacity during a roll
+  template:
+    metadata:
+      labels:
+        {{- include "app.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      # Private registry (ADR-013). Secret materialized per namespace by ESO (D13).
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.gracefulShutdown.terminationGracePeriodSeconds }}
+      automountServiceAccountToken: false
+
+      # ---- Pod-level security: HARDCODED, not values-driven ----
+      # Deliberately not exposed in values.yaml. A values file must not be able
+      # to weaken this, and Kyverno (IRD-021) must pass by construction rather
+      # than by a reviewer remembering to check.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      {{- if .Values.antiAffinity.enabled }}
+      # Soft (preferred) anti-affinity: spread across the 2 nodes when possible.
+      # NOT required — on a 2-node cluster a hard rule leaves pods Pending the
+      # moment replicas > nodes.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: {{ .Values.antiAffinity.topologyKey }}
+                labelSelector:
+                  matchLabels:
+                    {{- include "app.selectorLabels" . | nindent 20 }}
+      {{- end }}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: {{ include "app.name" . }}
+          image: {{ include "app.image" . }}
+          imagePullPolicy: IfNotPresent
+
+          # ---- Container-level security: HARDCODED, same reasoning ----
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+
+          {{- with .Values.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          {{- with .Values.envFromSecret }}
+          envFrom:
+            {{- range . }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+          {{- end }}
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          # startupProbe carries the slow-boot budget so liveness can stay tight.
+          # Without it, a JVM that takes 90s to warm gets killed by liveness
+          # before it ever serves — the classic Spring Boot on k8s failure.
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startupPath | default .Values.probes.path }}
+              port: {{ .Values.probes.port }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.path }}
+              port: {{ .Values.probes.port }}
+            initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readinessPath }}
+              port: {{ .Values.probes.port }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.failureThreshold }}
+
+          # readOnlyRootFilesystem: true above means anything that writes needs
+          # an explicit emptyDir. /tmp covers the JVM and nginx's temp paths.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}

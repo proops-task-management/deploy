@@ -1,0 +1,226 @@
+name: deploy-pr-opened
+
+# THE GATE THAT REPLACES THIS REPO'S MISSING COMPILER (IRD-017).
+#
+# Every other repo in the program fails early somewhere: a service repo fails at
+# `mvn test`, iac-platform fails at `terraform plan`. THIS repo has nothing of
+# the kind. A malformed kustomization.yaml, a values key that violates
+# values.schema.json, or a manifest that breaks a Kyverno policy all merge
+# perfectly clean — and fail INSIDE THE CLUSTER at sync time, where `selfHeal:
+# true` on dev retries the broken state forever. The render IS the build here.
+#
+# FOUR SIGNALS, in the order a defect gets cheaper to find:
+#   chart-lint    — is the chart itself well-formed?         (helm lint)
+#   render        — does every overlay produce valid YAML?    (kustomize + kubeconform)
+#   policy        — would the cluster's admission control accept it? (kyverno CLI)
+#   workflow-lint — are these workflows themselves valid?     (actionlint + yamllint)
+#
+# `policy` is the one worth understanding. Without it, a Kyverno violation is
+# discovered when Argo CD's sync is REJECTED BY ADMISSION — after merge, in the
+# cluster, as a sync failure rather than a review comment. Running the same
+# policies here moves that discovery into the PR diff.
+#
+# NO UPLOAD/DOWNLOAD-ARTIFACT, deliberately. `render` and `policy` share the
+# rendered output, which would normally mean artifact passing — but every
+# third-party `uses:` in this repo must be a full SHA pin (MIN-65), and adding
+# two more pinned actions to move a few hundred KB between jobs is a worse trade
+# than rendering twice. `policy` re-runs the render itself; it is seconds.
+
+on:
+  pull_request:
+    paths:
+      - "charts/**"
+      - "apps/**"
+      - "infra/**"
+      - "bootstrap/**"
+      - "argocd/**"
+      - "scripts/**"
+      # ALL workflows, not just this one — the MIN-60 lesson. A change to
+      # secret-scan.yml or action-pins.yml must not reach main unlinted.
+      - ".github/workflows/**"
+
+concurrency:
+  group: deploy-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Pinned in ONE place so every job agrees, and so a bump is a single-line diff.
+# helm is held at 3.x ON PURPOSE: Helm 4 is released (4.3.0), but TSG-020
+# records Helm 4 breaking the pinned kubernetes.core collection in iac-platform,
+# and `kustomize --enable-helm` shells out to whatever `helm` it finds. Moving
+# to 4.x is a deliberate, separately-verified change — not something this gate
+# should pick up silently from a runner image.
+env:
+  HELM_VERSION: "3.16.4"       # lockstep: the operator's local helm
+  KUSTOMIZE_VERSION: "5.8.1"   # lockstep: the operator's local kustomize
+  KUBECONFORM_VERSION: "0.8.0" # lockstep: the operator's local kubeconform
+  KYVERNO_VERSION: "1.19.1"
+  YAMLLINT_VERSION: "1.35.1"   # lockstep: .pre-commit-config.yaml rev v1.35.1
+  ACTIONLINT_VERSION: "1.7.1"  # lockstep: .pre-commit-config.yaml rev v1.7.1
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      charts: ${{ steps.filter.outputs.charts }}
+      manifests: ${{ steps.filter.outputs.manifests }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          # `manifests` deliberately includes charts/**: a chart change alters
+          # what EVERY overlay renders, so it must re-render them all. The
+          # reverse is not true, which is why `charts` is narrower.
+          filters: |
+            charts:
+              - 'charts/**'
+            manifests:
+              - 'charts/**'
+              - 'apps/**'
+              - 'infra/**'
+              - 'bootstrap/**'
+              - 'argocd/**'
+              - 'scripts/**'
+            workflows:
+              - '.github/workflows/**'
+
+  chart-lint:
+    needs: changes
+    if: needs.changes.outputs.charts == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned helm
+        run: |
+          set -euo pipefail
+          curl -fsSL -o helm.tar.gz \
+            "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+          tar -xzf helm.tar.gz linux-amd64/helm
+          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      # Minimal required values only. This asserts the TEMPLATES are well-formed,
+      # not that any particular service's values are — that is the render job's
+      # concern, against the real values files.
+      - name: helm lint
+        run: helm lint charts/app --set service.name=lint --set image.repository=lint --set image.tag=v0
+
+  render:
+    needs: changes
+    if: needs.changes.outputs.manifests == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned toolchain
+        run: |
+          set -euo pipefail
+          curl -fsSL -o helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+          tar -xzf helm.tar.gz linux-amd64/helm
+          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
+
+          curl -fsSL -o kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          tar -xzf kustomize.tar.gz kustomize
+          sudo install -m 0755 kustomize /usr/local/bin/kustomize
+
+          curl -fsSL -o kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+
+      # THE SAME SCRIPT the `render-validate` pre-commit hook runs. One
+      # implementation, two call sites — local and CI cannot drift about WHAT is
+      # rendered or HOW it is validated, only about tool versions, which the
+      # env block above pins. This is the structural form of lockstep, the only
+      # form that has actually held in this program (cf. lint-brace-guard.sh).
+      - name: Render every overlay + kubeconform
+        run: ./scripts/render-all.sh
+
+  policy:
+    needs: changes
+    if: needs.changes.outputs.manifests == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned toolchain
+        run: |
+          set -euo pipefail
+          curl -fsSL -o helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+          tar -xzf helm.tar.gz linux-amd64/helm
+          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
+
+          curl -fsSL -o kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          tar -xzf kustomize.tar.gz kustomize
+          sudo install -m 0755 kustomize /usr/local/bin/kustomize
+
+          curl -fsSL -o kyverno.tar.gz \
+            "https://github.com/kyverno/kyverno/releases/download/v${KYVERNO_VERSION}/kyverno-cli_v${KYVERNO_VERSION}_linux_x86_64.tar.gz"
+          tar -xzf kyverno.tar.gz kyverno
+          sudo install -m 0755 kyverno /usr/local/bin/kyverno
+          kyverno version
+
+      # The policies are THIS REPO'S OWN (infra/kyverno/policies/) — the exact
+      # files Argo CD installs into the cluster. That identity is the whole
+      # point: a gate testing a private copy of the rules would drift from what
+      # admission actually enforces, and the drift would only surface as a
+      # rejected sync. One set of policy files, two consumers.
+      - name: Apply cluster policies to every rendered manifest
+        run: |
+          set -euo pipefail
+
+          if [ -z "$(find infra/kyverno/policies -name '*.yaml' -type f 2>/dev/null)" ]; then
+            echo "::error::No policies found in infra/kyverno/policies/. This job must never pass vacuously — an empty policy set means every manifest trivially complies. Either add policies or remove this job deliberately."
+            exit 1
+          fi
+
+          # Render fresh (see the header note on why no artifact passing).
+          RENDER_DIR=rendered KEEP_RENDER=true ./scripts/render-all.sh >/dev/null
+
+          echo "== kyverno apply =="
+          kyverno apply infra/kyverno/policies/ \
+            --resource rendered/ \
+            --detailed-results \
+            --table
+
+  workflow-lint:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned actionlint
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf actionlint.tar.gz actionlint
+          sudo install -m 0755 actionlint /usr/local/bin/actionlint
+          actionlint --version
+
+      - name: actionlint
+        run: actionlint -color
+
+      - name: yamllint
+        run: |
+          set -euo pipefail
+          pip install "yamllint==${YAMLLINT_VERSION}"
+          # Whole repo, not just .github/ — charts/*/templates/ is excluded by
+          # .yamllint.yaml (Go templating is not YAML), everything else is real
+          # YAML and must be linted.
+          yamllint -c .yamllint.yaml .

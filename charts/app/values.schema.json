@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "app chart values (IRD-017)",
+  "description": "Contract for every PROOPS task-management service. Helm validates a values file against this BEFORE rendering, so a typo'd or missing key fails at `kustomize build` time in CI rather than as a broken Deployment in the cluster.",
+  "type": "object",
+  "required": ["service", "image", "replicaCount", "resources", "probes"],
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "object",
+      "required": ["name", "port", "targetPort"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "targetPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": {
+          "type": "string",
+          "not": { "const": "latest" },
+          "description": "Immutable SHA set by the overlay's images: transformer. `latest` is rejected here AND at admission by Kyverno (IRD-007/IRD-021)."
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": { "name": { "type": "string" } }
+      }
+    },
+    "replicaCount": { "type": "integer", "minimum": 0 },
+    "resources": {
+      "type": "object",
+      "required": ["requests", "limits"],
+      "additionalProperties": false,
+      "description": "Both requests AND limits are required — a pod without them is unschedulable QoS roulette on an 8 GB cluster.",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "required": ["cpu", "memory"],
+          "additionalProperties": false,
+          "properties": { "cpu": { "type": "string" }, "memory": { "type": "string" } }
+        },
+        "limits": {
+          "type": "object",
+          "required": ["cpu", "memory"],
+          "additionalProperties": false,
+          "properties": { "cpu": { "type": "string" }, "memory": { "type": "string" } }
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "required": ["path", "readinessPath", "port"],
+      "additionalProperties": false,
+      "properties": {
+        "port": { "type": ["string", "integer"] },
+        "path": { "type": "string", "minLength": 1 },
+        "readinessPath": { "type": "string", "minLength": 1 },
+        "startupPath": { "type": "string" },
+        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 },
+        "startup": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "periodSeconds": { "type": "integer", "minimum": 1 },
+            "failureThreshold": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "host": { "type": "string" },
+        "path": { "type": "string" },
+        "pathType": { "type": "string", "enum": ["Prefix", "Exact", "ImplementationSpecific"] },
+        "tls": { "type": "boolean" },
+        "clusterIssuer": { "type": "string" }
+      }
+    },
+    "hpa": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "min": { "type": "integer", "minimum": 1 },
+        "max": { "type": "integer", "minimum": 1 },
+        "targetCPU": { "type": "integer", "minimum": 1, "maximum": 100 }
+      }
+    },
+    "env": {
+      "type": "array",
+      "description": "NON-SECRET config only. Anything secret goes through envFromSecret + ESO.",
+      "items": {
+        "type": "object",
+        "required": ["name", "value"],
+        "additionalProperties": false,
+        "properties": { "name": { "type": "string" }, "value": { "type": "string" } }
+      }
+    },
+    "envFromSecret": { "type": "array", "items": { "type": "string" } },
+    "externalSecret": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "storeName": { "type": "string" },
+        "remoteKey": { "type": "string" },
+        "targetName": { "type": "string" },
+        "refreshInterval": { "type": "string" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "path": { "type": "string" },
+        "port": { "type": ["string", "integer"] },
+        "interval": { "type": "string" }
+      }
+    },
+    "flyway": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "type": "string" },
+        "tag": { "type": "string" },
+        "secretName": { "type": "string" }
+      }
+    },
+    "gracefulShutdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "pdb": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "maxUnavailable": { "type": ["integer", "string"] }
+      }
+    },
+    "antiAffinity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "topologyKey": { "type": "string" }
+      }
+    },
+    "podAnnotations": { "type": "object" },
+    "annotations": { "type": "object" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" }
+  }
+}
