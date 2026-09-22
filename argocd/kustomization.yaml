@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# What the root app-of-apps points at. Everything reachable from here is
+# reconciled by Argo CD; nothing below is ever applied by hand.
+#
+# Plain resources only — no helmCharts: — so kustomize's `namespace:` DOES apply
+# here, unlike in the service overlays. Both Argo objects already carry
+# `namespace: platform` explicitly, which is deliberate redundancy: these are
+# the manifests most likely to be read in an incident, and "which namespace does
+# the ApplicationSet live in" should be answerable from the file alone.
+namespace: platform
+
+resources:
+  - applicationset-services.yaml
+  # apps-infra/ — one Application per infra component (cert-manager, ESO,
+  # Kyverno, kube-prometheus-stack, Loki, Tempo, MySQL, Redis, backup CronJob),
+  # sync-wave ordered per IRD-017. Arrives at D13/D14; the directory is
+  # deliberately not listed until it has content, because a `resources:` entry
+  # pointing at an empty or missing directory fails the render — and this
+  # repo's whole CI gate is the render.

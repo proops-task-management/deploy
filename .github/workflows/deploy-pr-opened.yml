@@ -20,6 +20,16 @@ name: deploy-pr-opened
 # cluster, as a sync failure rather than a review comment. Running the same
 # policies here moves that discovery into the PR diff.
 #
+# TOOLCHAIN INSTALL IS ONE SCRIPT, NOT ONE BLOCK PER JOB — scripts/install-ci-tools.sh.
+# The first version duplicated the curl/tar block in each job and they drifted
+# within a day: `policy`'s copy omitted kubeconform, which render-all.sh requires,
+# and the job died on the very first PR with `exit 127`. GitHub Actions has no
+# YAML anchors, so "don't repeat the block" has to mean "put it in a script" —
+# the same move this repo already makes with render-all.sh (hook + two jobs) and
+# iac-platform makes with lint-brace-guard.sh. All four tools install in every
+# job, including kyverno where it is unused: a per-job tool subset is precisely
+# what broke, and two seconds is cheaper than that class of bug.
+#
 # NO UPLOAD/DOWNLOAD-ARTIFACT, deliberately. `render` and `policy` share the
 # rendered output, which would normally mean artifact passing — but every
 # third-party `uses:` in this repo must be a full SHA pin (MIN-65), and adding
@@ -96,14 +106,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install pinned helm
-        run: |
-          set -euo pipefail
-          curl -fsSL -o helm.tar.gz \
-            "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
-          tar -xzf helm.tar.gz linux-amd64/helm
-          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
-          helm version --short
+      - name: Install pinned toolchain
+        run: ./scripts/install-ci-tools.sh
 
       # Minimal required values only. This asserts the TEMPLATES are well-formed,
       # not that any particular service's values are — that is the render job's
@@ -121,21 +125,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install pinned toolchain
-        run: |
-          set -euo pipefail
-          curl -fsSL -o helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
-          tar -xzf helm.tar.gz linux-amd64/helm
-          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
-
-          curl -fsSL -o kustomize.tar.gz \
-            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
-          tar -xzf kustomize.tar.gz kustomize
-          sudo install -m 0755 kustomize /usr/local/bin/kustomize
-
-          curl -fsSL -o kubeconform.tar.gz \
-            "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
-          tar -xzf kubeconform.tar.gz kubeconform
-          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+        run: ./scripts/install-ci-tools.sh
 
       # THE SAME SCRIPT the `render-validate` pre-commit hook runs. One
       # implementation, two call sites — local and CI cannot drift about WHAT is
@@ -155,45 +145,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install pinned toolchain
-        run: |
-          set -euo pipefail
-          curl -fsSL -o helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
-          tar -xzf helm.tar.gz linux-amd64/helm
-          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
-
-          curl -fsSL -o kustomize.tar.gz \
-            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
-          tar -xzf kustomize.tar.gz kustomize
-          sudo install -m 0755 kustomize /usr/local/bin/kustomize
-
-          curl -fsSL -o kyverno.tar.gz \
-            "https://github.com/kyverno/kyverno/releases/download/v${KYVERNO_VERSION}/kyverno-cli_v${KYVERNO_VERSION}_linux_x86_64.tar.gz"
-          tar -xzf kyverno.tar.gz kyverno
-          sudo install -m 0755 kyverno /usr/local/bin/kyverno
-          kyverno version
+        run: ./scripts/install-ci-tools.sh
 
       # The policies are THIS REPO'S OWN (infra/kyverno/policies/) — the exact
       # files Argo CD installs into the cluster. That identity is the whole
       # point: a gate testing a private copy of the rules would drift from what
       # admission actually enforces, and the drift would only surface as a
       # rejected sync. One set of policy files, two consumers.
+      # Same script `task policy` runs. The command used to be inline here AND
+      # duplicated in the Taskfile — the third copy-paste pair in this repo, and
+      # the second to drift. It is a script now.
       - name: Apply cluster policies to every rendered manifest
-        run: |
-          set -euo pipefail
-
-          if [ -z "$(find infra/kyverno/policies -name '*.yaml' -type f 2>/dev/null)" ]; then
-            echo "::error::No policies found in infra/kyverno/policies/. This job must never pass vacuously — an empty policy set means every manifest trivially complies. Either add policies or remove this job deliberately."
-            exit 1
-          fi
-
-          # Render fresh (see the header note on why no artifact passing).
-          RENDER_DIR=rendered KEEP_RENDER=true ./scripts/render-all.sh >/dev/null
-
-          echo "== kyverno apply =="
-          kyverno apply infra/kyverno/policies/ \
-            --resource rendered/ \
-            --detailed-results \
-            --table
+        run: ./scripts/policy-check.sh
 
   workflow-lint:
     needs: changes

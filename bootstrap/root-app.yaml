@@ -1,0 +1,58 @@
+# THE ONE MANIFEST APPLIED BY HAND — exactly once per cluster.
+#
+# The chicken-and-egg (IRD-017 §Bootstrap): Argo CD cannot manage this repo until
+# something tells it the repo exists. Ansible's `argocd-bootstrap` role helm-installs
+# Argo CD and then runs `kubectl apply -f bootstrap/root-app.yaml`. After that,
+# every further change — including to Argo CD itself — arrives through git.
+#
+# This is an "app of apps": it does not deploy workloads. It deploys `argocd/`,
+# which contains the ApplicationSet (5 services × 3 envs) and one Application per
+# infra component. So the hand-applied surface is ONE file, and everything below
+# it is reconciled.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: platform
+  # Without this finalizer, deleting the root Application orphans every child —
+  # they keep running with nothing managing them, which is the worst of both
+  # worlds. With it, a deliberate delete cascades.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # PUBLIC HTTPS, no credential (IRD-017 §Bootstrap). This is the reason the
+    # repo is public: Argo needs no repo secret, so there is no secret to rotate,
+    # leak or bootstrap before bootstrapping.
+    repoURL: https://github.com/proops-task-management/deploy.git
+    targetRevision: main
+    path: argocd
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform
+
+  syncPolicy:
+    automated:
+      # prune: a child Application deleted from git is deleted from the cluster.
+      # Without it, removing a service from the repo leaves it running forever.
+      prune: true
+      # selfHeal: a hand-edited Application is reverted. This is what makes
+      # "the repo is the source of truth" true rather than aspirational.
+      selfHeal: true
+      # allowEmpty: false — if `argocd/` ever renders to nothing (a bad path, a
+      # broken kustomization), Argo REFUSES to sync rather than pruning every
+      # child. An empty render is far more likely to be a mistake than an
+      # instruction to delete the platform.
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

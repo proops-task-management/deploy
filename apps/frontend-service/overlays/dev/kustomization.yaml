@@ -1,0 +1,63 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: dev
+
+# NAMESPACE — read this before trusting the line above.
+#
+# `namespace:` here does NOT reach the resources inflated from charts/app.
+# Verified, not assumed: setting it in this overlay, in the base, and even as
+# `helmCharts[].namespace` all produce output with NO `metadata.namespace`.
+#
+# The reason is not a kustomize bug — it is that charts/app's templates do not
+# emit `metadata.namespace`, which is the correct Helm convention: a chart lets
+# the install target decide where it lands. `helm template --namespace X` only
+# sets `.Release.Namespace`; it does not inject the field.
+#
+# WHAT ACTUALLY PLACES THESE RESOURCES: Argo CD's
+# `Application.spec.destination.namespace`, set per environment by the
+# ApplicationSet (IRD-017 §ApplicationSet). That is the designed mechanism, not
+# a workaround.
+#
+# The line is kept because it is NOT dead: any plain (non-chart) resource added
+# to this overlay later — a ConfigMap, a NetworkPolicy — WILL receive it, and it
+# will match what Argo assigns the chart resources. Both paths land in the same
+# namespace. It is documented here so nobody reads it as the thing doing the work.
+#
+# COROLLARY: `kustomize build | kubectl apply -f -` from this directory would
+# land everything in `default`. Never do that — see CLAUDE.md.
+
+resources:
+  - ../../base
+
+# THE IMAGE LINE IS MACHINE-OWNED. `bump-dev` in the service repo's CI runs
+# `kustomize edit set image` against THIS file after a merge to main (IRD-015).
+# Do not hand-edit newTag here — a human edit and the next CI bump will fight,
+# and the CI one wins silently.
+#
+# The placeholder below is what the base renders with; the first bump-dev run
+# replaces it with an immutable SHA. It is NOT `latest`: values.schema.json
+# rejects that at render and Kyverno rejects it at admission.
+images:
+  - name: ghcr.io/proops-task-management/frontend-service
+    newTag: placeholder
+
+# dev is the only environment that runs full-stack continuously — the 8 GB
+# capacity rule (ADR-003). staging/prod sit at replicas: 0 except during a
+# promotion test.
+replicas:
+  - name: frontend-service
+    count: 1
+
+patches:
+  # The only internet-facing service. Host is per-environment, so it belongs
+  # here and not in values-common.yaml.
+  - target:
+      kind: Deployment
+      name: frontend-service
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: ENVIRONMENT
+            value: dev

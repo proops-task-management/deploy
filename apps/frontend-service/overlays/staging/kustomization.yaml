@@ -1,0 +1,57 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: staging
+
+# NAMESPACE — read this before trusting the line above.
+#
+# `namespace:` here does NOT reach the resources inflated from charts/app.
+# Verified, not assumed: setting it in this overlay, in the base, and even as
+# `helmCharts[].namespace` all produce output with NO `metadata.namespace`.
+#
+# The reason is not a kustomize bug — it is that charts/app's templates do not
+# emit `metadata.namespace`, which is the correct Helm convention: a chart lets
+# the install target decide where it lands. `helm template --namespace X` only
+# sets `.Release.Namespace`; it does not inject the field.
+#
+# WHAT ACTUALLY PLACES THESE RESOURCES: Argo CD's
+# `Application.spec.destination.namespace`, set per environment by the
+# ApplicationSet (IRD-017 §ApplicationSet). That is the designed mechanism, not
+# a workaround.
+#
+# The line is kept because it is NOT dead: any plain (non-chart) resource added
+# to this overlay later — a ConfigMap, a NetworkPolicy — WILL receive it, and it
+# will match what Argo assigns the chart resources. Both paths land in the same
+# namespace. It is documented here so nobody reads it as the thing doing the work.
+#
+# COROLLARY: `kustomize build | kubectl apply -f -` from this directory would
+# land everything in `default`. Never do that — see CLAUDE.md.
+
+resources:
+  - ../../base
+
+# PROMOTION TARGET. This tag is changed by a HUMAN PR copying the SHA that dev
+# is currently running — never by CI, and never by `kubectl set image`. The PR
+# diff is exactly one line, which is what makes the review meaningful (IRD-017
+# §Flows). Rollback is `git revert` of that PR.
+images:
+  - name: ghcr.io/proops-task-management/frontend-service
+    newTag: placeholder
+
+# replicas: 0 BY DEFAULT — this is the documented 8 GB capacity compromise
+# (ADR-003), not an oversight. The cluster cannot hold three full stacks.
+# Scaling to 1 for a promotion test is a deliberate, temporary edit here.
+replicas:
+  - name: frontend-service
+    count: 0
+
+patches:
+  - target:
+      kind: Deployment
+      name: frontend-service
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: ENVIRONMENT
+            value: staging

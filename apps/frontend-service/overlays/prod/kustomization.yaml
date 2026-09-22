@@ -1,0 +1,67 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: prod
+
+# NAMESPACE — read this before trusting the line above.
+#
+# `namespace:` here does NOT reach the resources inflated from charts/app.
+# Verified, not assumed: setting it in this overlay, in the base, and even as
+# `helmCharts[].namespace` all produce output with NO `metadata.namespace`.
+#
+# The reason is not a kustomize bug — it is that charts/app's templates do not
+# emit `metadata.namespace`, which is the correct Helm convention: a chart lets
+# the install target decide where it lands. `helm template --namespace X` only
+# sets `.Release.Namespace`; it does not inject the field.
+#
+# WHAT ACTUALLY PLACES THESE RESOURCES: Argo CD's
+# `Application.spec.destination.namespace`, set per environment by the
+# ApplicationSet (IRD-017 §ApplicationSet). That is the designed mechanism, not
+# a workaround.
+#
+# The line is kept because it is NOT dead: any plain (non-chart) resource added
+# to this overlay later — a ConfigMap, a NetworkPolicy — WILL receive it, and it
+# will match what Argo assigns the chart resources. Both paths land in the same
+# namespace. It is documented here so nobody reads it as the thing doing the work.
+#
+# COROLLARY: `kustomize build | kubectl apply -f -` from this directory would
+# land everything in `default`. Never do that — see CLAUDE.md.
+
+resources:
+  - ../../base
+
+# PROMOTION TARGET — staging → prod, by human PR only. Same rule as staging,
+# with one addition: the SHA landing here must be one that has actually run in
+# staging. Copying straight from dev skips the only environment that proves the
+# image starts under promotion conditions.
+images:
+  - name: ghcr.io/proops-task-management/frontend-service
+    newTag: placeholder
+
+# replicas: 0 by default (ADR-003 capacity compromise) — raised for a demo or a
+# promotion test, then lowered again.
+replicas:
+  - name: frontend-service
+    count: 0
+
+patches:
+  - target:
+      kind: Deployment
+      name: frontend-service
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: ENVIRONMENT
+            value: prod
+
+  # prod is the only overlay that turns the Ingress on by default. dev and
+  # staging are reached through port-forward or a temporary host; the public
+  # name belongs to prod alone (D18 wires DNS + cert-manager TLS).
+  - target:
+      kind: Deployment
+      name: frontend-service
+    patch: |-
+      - op: replace
+        path: /spec/revisionHistoryLimit
+        value: 5

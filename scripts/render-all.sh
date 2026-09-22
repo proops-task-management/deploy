@@ -65,10 +65,16 @@ echo
 # `-exec dirname {} +` rather than `| xargs -n1 dirname` (SC2038): xargs splits
 # on whitespace, so a path containing a space would be torn into two bogus
 # targets. `find -exec` passes arguments intact.
+#
+# SEARCH ROOTS: apps, infra AND argocd. `argocd/` was missing from this list in
+# the first draft, which meant the ApplicationSet and the infra Applications —
+# the manifests that decide what every other manifest does — were the only ones
+# the gate never checked. A gate that skips the control plane is the shape this
+# program keeps filing tickets about.
 TARGETS=()
 while IFS= read -r dir; do
   TARGETS+=("${dir}")
-done < <(find apps infra -name kustomization.yaml -type f -exec dirname {} + 2>/dev/null | sort -u)
+done < <(find apps infra argocd -name kustomization.yaml -type f -exec dirname {} + 2>/dev/null | sort -u)
 
 if [ ${#TARGETS[@]} -eq 0 ]; then
   echo "ERROR: no kustomization.yaml found under apps/ or infra/." >&2
@@ -121,6 +127,29 @@ for target in "${TARGETS[@]}"; do
     continue
   fi
 done
+
+# --- raw manifests with no kustomization ------------------------------------
+# bootstrap/root-app.yaml is applied by `kubectl apply -f`, once per cluster, by
+# hand (IRD-017 §Bootstrap). It has no kustomization.yaml, so the loop above
+# never sees it — yet it is the single most expensive file in the repo to get
+# wrong: it is applied when Argo CD is not yet managing anything, so a mistake
+# surfaces as "the bootstrap did nothing" with no reconciler to correct it.
+# Validate it directly.
+if [ -d bootstrap ]; then
+  echo
+  while IFS= read -r f; do
+    printf '==> %s (raw)\n' "${f}"
+    if ! kubeconform \
+        -strict -summary \
+        -kubernetes-version "${K8S_VERSION}" \
+        -schema-location default \
+        -schema-location "${CRD_CATALOG}" \
+        -ignore-missing-schemas \
+        "${f}" 2>&1 | sed 's/^/    /'; then
+      FAILED+=("${f} (validate)")
+    fi
+  done < <(find bootstrap -name '*.yaml' -type f 2>/dev/null | sort)
+fi
 
 echo
 if [ ${#FAILED[@]} -ne 0 ]; then

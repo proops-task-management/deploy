@@ -46,10 +46,10 @@ tasks:
   policy:
     desc: Run the cluster's own Kyverno policies against every rendered manifest (needs `brew install kyverno`)
     cmds:
-      # Mirrors deploy-pr-opened.yml's `policy` job, against the SAME policy
-      # files Argo installs — infra/kyverno/policies/, not a private copy.
-      - RENDER_DIR=rendered KEEP_RENDER=true ./scripts/render-all.sh > /dev/null
-      - kyverno apply infra/kyverno/policies/ --resource rendered/ --detailed-results --table
+      # The SAME script deploy-pr-opened.yml's `policy` job runs — not a
+      # re-typed copy of the command. The re-typed version is what this repo
+      # has already been burned by twice in one day.
+      - ./scripts/policy-check.sh
       - rm -rf rendered
 
   chart-lint:
