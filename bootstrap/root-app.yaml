@@ -2,8 +2,16 @@
 #
 # The chicken-and-egg (IRD-017 §Bootstrap): Argo CD cannot manage this repo until
 # something tells it the repo exists. Ansible's `argocd-bootstrap` role helm-installs
-# Argo CD and then runs `kubectl apply -f bootstrap/root-app.yaml`. After that,
-# every further change — including to Argo CD itself — arrives through git.
+# Argo CD and then applies THIS FILE, fetched from `main` over public HTTPS — no
+# credential, which is the whole reason this repo is public. After that, every
+# further change — including to Argo CD itself — arrives through git.
+#
+# Corrected 2026-09-22 (D12): until then the role rendered its OWN copy of this
+# Application from `root-app.yaml.j2`, and that copy had `path: bootstrap` — it
+# pointed the root app at the directory holding this file instead of at `argocd/`.
+# Two definitions of one object is the defect; the wrong `path` was only how it
+# would have shown up. The template is deleted, and this file is now the single
+# definition in the program.
 #
 # This is an "app of apps": it does not deploy workloads. It deploys `argocd/`,
 # which contains the ApplicationSet (5 services × 3 envs) and one Application per
