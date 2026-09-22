@@ -49,15 +49,18 @@ spec:
         repoURL: https://github.com/proops-task-management/deploy.git
         targetRevision: main
         path: 'apps/{{.service}}/overlays/{{.env}}'
-        # REQUIRED — without it Argo refuses the `helmCharts:` inflation with
-        # "must specify --enable-helm". The cluster-wide equivalent is
-        # `kustomize.buildOptions: --enable-helm` in the argocd-cm ConfigMap;
-        # setting it per-Application here keeps the requirement visible at the
-        # point that depends on it instead of in a ConfigMap nobody reads.
-        kustomize:
-          # (Argo passes --enable-helm when this block is present and the
-          # controller is configured for it — verify at the D12 window, AC-5.)
-          version: v5.8.1
+        # --enable-helm is NOT set here, and cannot be: Argo CD takes kustomize
+        # build flags only from `kustomize.buildOptions` in argocd-cm. That is set
+        # by iac-platform's argocd-bootstrap role (`argocd_helm_values`). Without
+        # it, every overlay below fails with "must specify --enable-helm".
+        #
+        # Corrected 2026-09-22 (D12, $0 pre-flight): this block used to carry
+        # `kustomize.version: v5.8.1`. In Argo that field names a binary
+        # REGISTERED in argocd-cm (`kustomize.path.v5.8.1`), not a version to
+        # fetch — none was registered, so it would have failed every app. Argo's
+        # bundled kustomize is used instead. Accepted cost: the CI render gate
+        # pins v5.8.1 and the cluster renders with Argo's bundled version, so a
+        # feature newer than the bundled one could pass CI and fail at sync.
       destination:
         server: https://kubernetes.default.svc
         # THIS is what places every resource in the right namespace. The chart's
