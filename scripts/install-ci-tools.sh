@@ -63,4 +63,16 @@ echo "== installed =="
 helm version --short
 kustomize version
 kubeconform -v
-kyverno version | head -1
+# NOT `kyverno version | head -1`. That form exits **141** (128 + SIGPIPE) under
+# the `set -euo pipefail` this repo mandates (IRD-014 §Bash script standards):
+# `head` reads its one line and closes the pipe, `kyverno` is still writing, gets
+# SIGPIPE, and `pipefail` promotes that to the pipeline's status. Every tool
+# installed correctly and the script still failed on its last line — CI exit 141
+# with no error message, because SIGPIPE prints nothing.
+# Note that shellcheck cannot see this: it is a runtime interaction between
+# pipefail and a short-reading consumer, not a syntax issue. Print all three
+# lines instead; there is nothing to truncate.
+# (This comment is deliberately NOT started with the word "shellcheck" — a
+# comment beginning `# shellcheck ...` is parsed as a DIRECTIVE, and this one
+# tripped SC1072/SC1073 in its first draft.)
+kyverno version
