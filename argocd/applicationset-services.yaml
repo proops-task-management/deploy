@@ -1,0 +1,82 @@
+# 5 services × 3 environments = 15 Applications, from one file.
+#
+# WHY A MATRIX GENERATOR AND NOT 15 HAND-WRITTEN APPLICATIONS: the 15 differ in
+# exactly two fields — the source path and the destination namespace. Fifteen
+# near-identical files drift; one generator cannot. Onboarding a sixth service
+# is one line in `services` below, not three new files.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: services
+  namespace: platform
+spec:
+  # Orphaned resources stay put if this ApplicationSet is deleted — deleting the
+  # generator should not take 15 running services with it. Removal is deliberate:
+  # delete the child Applications, or set this to `background`.
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - service: frontend-service
+                - service: api-gateway
+                - service: user-service
+                - service: task-service
+                - service: notification-service
+          - list:
+              elements:
+                # `auto` drives syncPolicy below. dev reconciles continuously;
+                # staging and prod land on merge of a promotion PR — the review
+                # IS the gate, so no manual Sync click is required (IRD-017).
+                - env: dev
+                  auto: "true"
+                - env: staging
+                  auto: "true"
+                - env: prod
+                  auto: "true"
+
+  template:
+    metadata:
+      name: '{{.service}}-{{.env}}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/proops-task-management/deploy.git
+        targetRevision: main
+        path: 'apps/{{.service}}/overlays/{{.env}}'
+        # REQUIRED — without it Argo refuses the `helmCharts:` inflation with
+        # "must specify --enable-helm". The cluster-wide equivalent is
+        # `kustomize.buildOptions: --enable-helm` in the argocd-cm ConfigMap;
+        # setting it per-Application here keeps the requirement visible at the
+        # point that depends on it instead of in a ConfigMap nobody reads.
+        kustomize:
+          # (Argo passes --enable-helm when this block is present and the
+          # controller is configured for it — verify at the D12 window, AC-5.)
+          version: v5.8.1
+      destination:
+        server: https://kubernetes.default.svc
+        # THIS is what places every resource in the right namespace. The chart's
+        # templates deliberately do not emit `metadata.namespace` (Helm
+        # convention: the install target decides), and kustomize's `namespace:`
+        # does not reach chart-inflated resources. See the long note in any
+        # overlay's kustomization.yaml — verified, not assumed.
+        namespace: '{{.env}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+          allowEmpty: false
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m
