@@ -28,7 +28,7 @@ namespace: dev
 # land everything in `default`. Never do that — see CLAUDE.md.
 
 resources:
-  - ../../base
+- ../../base
 
 # THE IMAGE LINE IS MACHINE-OWNED. `bump-dev` in the service repo's CI runs
 # `kustomize edit set image` against THIS file after a merge to main (IRD-015).
@@ -39,25 +39,25 @@ resources:
 # replaces it with an immutable SHA. It is NOT `latest`: values.schema.json
 # rejects that at render and Kyverno rejects it at admission.
 images:
-  - name: ghcr.io/proops-task-management/frontend-service
-    newTag: placeholder
+- name: ghcr.io/proops-task-management/frontend-service
+  newTag: 41b0037c10af426607442cb6de73ab1af3da6adb
 
 # dev is the only environment that runs full-stack continuously — the 8 GB
 # capacity rule (ADR-003). staging/prod sit at replicas: 0 except during a
 # promotion test.
 replicas:
-  - name: frontend-service
-    count: 1
+- count: 1
+  name: frontend-service
 
-patches:
   # The only internet-facing service. Host is per-environment, so it belongs
   # here and not in values-common.yaml.
-  - target:
-      kind: Deployment
-      name: frontend-service
-    patch: |-
-      - op: add
-        path: /spec/template/spec/containers/0/env
-        value:
-          - name: ENVIRONMENT
-            value: dev
+patches:
+- patch: |-
+    - op: add
+      path: /spec/template/spec/containers/0/env
+      value:
+        - name: ENVIRONMENT
+          value: dev
+  target:
+    kind: Deployment
+    name: frontend-service
