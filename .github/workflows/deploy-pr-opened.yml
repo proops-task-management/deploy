@@ -152,23 +152,11 @@ jobs:
       # point: a gate testing a private copy of the rules would drift from what
       # admission actually enforces, and the drift would only surface as a
       # rejected sync. One set of policy files, two consumers.
+      # Same script `task policy` runs. The command used to be inline here AND
+      # duplicated in the Taskfile — the third copy-paste pair in this repo, and
+      # the second to drift. It is a script now.
       - name: Apply cluster policies to every rendered manifest
-        run: |
-          set -euo pipefail
-
-          if [ -z "$(find infra/kyverno/policies -name '*.yaml' -type f 2>/dev/null)" ]; then
-            echo "::error::No policies found in infra/kyverno/policies/. This job must never pass vacuously — an empty policy set means every manifest trivially complies. Either add policies or remove this job deliberately."
-            exit 1
-          fi
-
-          # Render fresh (see the header note on why no artifact passing).
-          RENDER_DIR=rendered KEEP_RENDER=true ./scripts/render-all.sh >/dev/null
-
-          echo "== kyverno apply =="
-          kyverno apply infra/kyverno/policies/ \
-            --resource rendered/ \
-            --detailed-results \
-            --table
+        run: ./scripts/policy-check.sh
 
   workflow-lint:
     needs: changes
