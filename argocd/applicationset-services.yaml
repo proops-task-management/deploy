@@ -10,6 +10,19 @@ metadata:
   name: services
   namespace: platform
 spec:
+  # REQUIRED by the `{{.service}}` syntax below — do not remove (added 2026-09-24, D12).
+  # ApplicationSet has TWO template engines. The default is fasttemplate, whose syntax
+  # is `{{service}}` with NO leading dot; `{{.service}}` is Go template and is only
+  # evaluated when this is true. With it unset, nothing substitutes: every Application
+  # is named the literal string `{{.service}}-{{.env}}`, which fails RFC 1123 and makes
+  # all 15 "duplicates" of each other. The generator still reports
+  # `ParametersGenerated: True` — the parameters were fine; only rendering was not.
+  goTemplate: true
+  # Fail loudly on an unknown key instead of rendering it as an empty string. Without
+  # this, a typo like `{{.svc}}` yields `-dev` — a valid name for the wrong thing.
+  goTemplateOptions:
+    - missingkey=error
+
   # Orphaned resources stay put if this ApplicationSet is deleted — deleting the
   # generator should not take 15 running services with it. Removal is deliberate:
   # delete the child Applications, or set this to `background`.
