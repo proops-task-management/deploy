@@ -227,11 +227,7 @@ jobs:
         run: RENDER_DIR=rendered KEEP_RENDER=true ./scripts/render-all.sh
 
       - name: Trivy config — Block on HIGH/CRITICAL
-        # CANARY — MIN-80 (TSG-036). TEMPORARY: points at the fix branch so the new install
-        # path is proven on a real cold runner BEFORE @v6 moves under 6 repos (IRD-015
-        # §Versioning). `action-pins` is EXPECTED to go red on this commit — a branch ref is
-        # not an allowed form. MUST be reverted to @v6 before this PR merges.
-        uses: proops-task-management/cicd-platform/.github/actions/trivy-scan@fix/minh_dt/trivy-scan-install-from-github-releases
+        uses: proops-task-management/cicd-platform/.github/actions/trivy-scan@v6
         with:
           scan-type: config
           scan-ref: rendered
