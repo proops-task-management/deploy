@@ -38,6 +38,7 @@ spec:
                 - service: api-gateway
                 - service: user-service
                 - service: task-service
+                - service: notification-service
           - list:
               elements:
                 # `auto` drives syncPolicy below. dev reconciles continuously;
@@ -95,3 +96,4 @@ spec:
             duration: 10s
             factor: 2
             maxDuration: 3m
+# MIN-79 AC-3 green control (throwaway PR, never merged)
