@@ -21,6 +21,10 @@
 #                   |                                        | CI 3.16.4; accepted
 #   render-validate | deploy-pr-opened: render + validate    | STRUCTURAL — one
 #                   |                                        | script (see below)
+#   (no hook)       | deploy-pr-opened: appset-eval          | STRUCTURAL — one
+#                   | local twin: `task appset`, NOT a hook  | script; pins read
+#                   | (~2 min + Docker per commit is the     | from the workflow
+#                   | wrong trade — CI is the enforced gate) | env block (MIN-79)
 #
 # THE LAST ROW IS THE IMPORTANT ONE. `scripts/render-all.sh` is executed by BOTH
 # this hook and the CI job, exactly as iac-platform does with
