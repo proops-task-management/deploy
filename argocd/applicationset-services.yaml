@@ -17,7 +17,6 @@ spec:
   # is named the literal string `{{.service}}-{{.env}}`, which fails RFC 1123 and makes
   # all 15 "duplicates" of each other. The generator still reports
   # `ParametersGenerated: True` — the parameters were fine; only rendering was not.
-  goTemplate: true
   # Fail loudly on an unknown key instead of rendering it as an empty string. Without
   # this, a typo like `{{.svc}}` yields `-dev` — a valid name for the wrong thing.
   goTemplateOptions:
