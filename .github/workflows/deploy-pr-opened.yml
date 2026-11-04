@@ -9,11 +9,18 @@ name: deploy-pr-opened
 # perfectly clean — and fail INSIDE THE CLUSTER at sync time, where `selfHeal:
 # true` on dev retries the broken state forever. The render IS the build here.
 #
-# FOUR SIGNALS, in the order a defect gets cheaper to find:
+# FIVE SIGNALS, in the order a defect gets cheaper to find:
 #   chart-lint    — is the chart itself well-formed?         (helm lint)
 #   render        — does every overlay produce valid YAML?    (kustomize + kubeconform)
 #   policy        — would the cluster's admission control accept it? (kyverno CLI)
+#   appset-eval   — what does the ApplicationSet actually GENERATE? (the cluster's
+#                   own Argo CD controller, in a throwaway kind cluster — MIN-79)
 #   workflow-lint — are these workflows themselves valid?     (actionlint + yamllint)
+#
+# `appset-eval` closes the one hole the other four cannot see: they validate the
+# ApplicationSet as a YAML OBJECT, which is valid whatever its template renders
+# to. TSG-035 (D12) shipped 15 Applications named `{{.service}}-{{.env}}` past a
+# green gate. Only a real controller evaluates a template, so the job runs one.
 #
 # `policy` is the one worth understanding. Without it, a Kyverno violation is
 # discovered when Argo CD's sync is REJECTED BY ADMISSION — after merge, in the
@@ -66,6 +73,18 @@ env:
   KYVERNO_VERSION: "1.19.1"
   YAMLLINT_VERSION: "1.35.1"   # lockstep: .pre-commit-config.yaml rev v1.35.1
   ACTIONLINT_VERSION: "1.7.1"  # lockstep: .pre-commit-config.yaml rev v1.7.1
+  # --- appset-eval (MIN-79) ---------------------------------------------------
+  # The controller version is the one that matters: a template evaluated by a
+  # different Argo CD than the cluster runs proves nothing about the cluster.
+  # MECHANICALLY held in lockstep — appset-eval.sh fetches IAC_PLATFORM_PINS_URL
+  # and FAILS if iac-platform's `argocd_chart_version` differs. 7.7.10 = Argo CD v2.13.2.
+  ARGOCD_CHART_VERSION: "7.7.10"
+  IAC_PLATFORM_PINS_URL: "https://raw.githubusercontent.com/proops-task-management/iac-platform/main/ansible/group_vars/all.yml"
+  KIND_VERSION: "0.29.0"
+  # Digest-pinned (a tag on Docker Hub is mutable). k8s v1.31 = the cluster's k3s
+  # minor (v1.31.5+k3s1). Digest copied from the kind v0.29.0 release notes.
+  KIND_NODE_IMAGE: "kindest/node:v1.31.9@sha256:b94a3a6c06198d17f59cca8c6f486236fa05e2fb359cbd75dabbfc348a10b211"
+  KUBECTL_VERSION: "1.31.9"    # same minor as the node image
 
 jobs:
   changes:
@@ -75,6 +94,7 @@ jobs:
     outputs:
       charts: ${{ steps.filter.outputs.charts }}
       manifests: ${{ steps.filter.outputs.manifests }}
+      appsets: ${{ steps.filter.outputs.appsets }}
       workflows: ${{ steps.filter.outputs.workflows }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,6 +114,14 @@ jobs:
               - 'bootstrap/**'
               - 'argocd/**'
               - 'scripts/**'
+            # Narrower than `manifests` on purpose: appset-eval costs ~2–3 min
+            # (a kind cluster + Argo CD), and only these paths can change what
+            # it measures. An overlay edit cannot change what is GENERATED.
+            appsets:
+              - 'argocd/applicationset-*.yaml'
+              - 'scripts/appset-eval.sh'
+              - 'scripts/install-ci-tools.sh'
+              - '.github/workflows/deploy-pr-opened.yml'
             workflows:
               - '.github/workflows/**'
 
@@ -157,6 +185,29 @@ jobs:
       # the second to drift. It is a script now.
       - name: Apply cluster policies to every rendered manifest
         run: ./scripts/policy-check.sh
+
+  appset-eval:
+    needs: changes
+    if: needs.changes.outputs.appsets == 'true'
+    runs-on: ubuntu-latest
+    # A hung kind/helm must not hold a runner for the 6-hour default.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned toolchain
+        run: ./scripts/install-ci-tools.sh
+
+      # THE SAME SCRIPT `task appset` runs locally — one implementation, two call
+      # sites. It (1) fails fast if this file's ARGOCD_CHART_VERSION has drifted
+      # from iac-platform's, (2) starts a throwaway kind cluster with Argo CD's
+      # application-controller scaled to 0 (Applications are generated, never
+      # synced), (3) applies the real ApplicationSet and asserts: no
+      # ErrorOccurred, exactly 15 Applications, every name a valid RFC 1123 label.
+      - name: Evaluate the ApplicationSet with the cluster's own controller
+        run: ./scripts/appset-eval.sh
 
   workflow-lint:
     needs: changes

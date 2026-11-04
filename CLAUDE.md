@@ -14,6 +14,11 @@ yourself reaching for a cluster command to "just test it", the correct move is `
 `task policy` locally. Argo's `selfHeal` would revert a manual change anyway, minutes later, with
 no obvious link back to what you did.
 
+**`task appset` / `scripts/appset-eval.sh` is not an exception** (MIN-79). It applies the
+ApplicationSet to a throwaway **kind** cluster it creates and deletes itself, through an isolated
+kubeconfig in a temp dir — never your current context. Keep it that way: any change that lets it
+read `~/.kube/config` or a pre-existing context turns a test harness into a delivery path.
+
 ## Tool boundaries — do not blur these
 
 - **Helm = shape.** One chart, `charts/app`, for all five services. A per-service difference goes

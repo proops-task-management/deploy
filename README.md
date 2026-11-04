@@ -28,7 +28,7 @@ charts/app/       the shared chart every service uses (one template, five values
 apps/<service>/   base/ (chart + values-common) + overlays/{dev,staging,prod}
 infra/            third-party components, pinned chart versions, one dir each
 argocd/           ApplicationSet (5 services × 3 envs) + one Application per infra component
-scripts/          render-all.sh — run by BOTH pre-commit and CI
+scripts/          render-all.sh — run by BOTH pre-commit and CI · appset-eval.sh — CI + `task appset`
 ```
 
 ## Getting started
@@ -46,7 +46,7 @@ task lint         # everything the CI gate runs
 or a manifest that breaks a Kyverno policy will **merge perfectly clean** and fail *inside the
 cluster* at sync time — where `selfHeal: true` on `dev` retries the broken state indefinitely.
 
-So the render **is** the build. `deploy-pr-opened.yml` gives four signals, ordered by how cheaply
+So the render **is** the build. `deploy-pr-opened.yml` gives five signals, ordered by how cheaply
 they find a defect:
 
 | Job | Question it answers | Tool |
@@ -54,7 +54,15 @@ they find a defect:
 | `chart-lint` | Is the chart itself well-formed? | `helm lint` |
 | `render` | Does every overlay produce valid Kubernetes YAML? | `kustomize` + `kubeconform` |
 | `policy` | Would the cluster's admission control accept it? | `kyverno` CLI |
+| `appset-eval` | What does the ApplicationSet actually **generate**? (15 Applications, valid names, no controller error) | Argo CD's own ApplicationSet controller, at the cluster's version, in a throwaway kind cluster |
 | `workflow-lint` | Are these workflows themselves valid? | `actionlint` + `yamllint` |
+
+`appset-eval` exists because the other four validate the ApplicationSet as a YAML **object**, which
+is valid whatever its template renders to. At D12 that let 15 Applications named
+`{{.service}}-{{.env}}` through a green gate (TSG-035). Only a real controller evaluates a template,
+so the job runs one — with the application-controller scaled to 0, so nothing is ever synced. It
+also fails if this repo's pinned Argo CD version drifts from the one `iac-platform` installs. Run
+it locally with `task appset` (needs Docker).
 
 `policy` runs **this repo's own** `infra/kyverno/policies/` — the exact files Argo CD installs
 into the cluster, not a private copy. That identity is the point: a gate testing its own copy of

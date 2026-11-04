@@ -15,8 +15,8 @@
 # in iac-platform). GitHub Actions has no YAML anchors, so "don't repeat the
 # block" has to mean "put the block in a script".
 #
-# ALL FOUR TOOLS ARE INSTALLED UNCONDITIONALLY, including kyverno in the `render`
-# job that does not use it. That costs a couple of seconds and removes the entire
+# ALL TOOLS ARE INSTALLED UNCONDITIONALLY, including kyverno in the `render` job
+# and kind/kubectl (MIN-79, `appset-eval` only) in jobs that do not use them. That costs a couple of seconds and removes the entire
 # class of bug: there is no per-job subset to get wrong. A job-specific tool list
 # is exactly what just broke.
 #
@@ -29,6 +29,8 @@ set -euo pipefail
 : "${KUSTOMIZE_VERSION:?KUSTOMIZE_VERSION must be set by the workflow env block}"
 : "${KUBECONFORM_VERSION:?KUBECONFORM_VERSION must be set by the workflow env block}"
 : "${KYVERNO_VERSION:?KYVERNO_VERSION must be set by the workflow env block}"
+: "${KIND_VERSION:?KIND_VERSION must be set by the workflow env block}"
+: "${KUBECTL_VERSION:?KUBECTL_VERSION must be set by the workflow env block}"
 
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 TMP="$(mktemp -d)"
@@ -58,6 +60,22 @@ curl -fsSL -o kyverno.tar.gz \
 tar -xzf kyverno.tar.gz kyverno
 sudo install -m 0755 kyverno "${BIN_DIR}/kyverno"
 
+# kind + kubectl: used only by the `appset-eval` job (MIN-79), installed in every
+# job anyway — the "no per-job subset" rule above. `--retry 3` on these two (MIN-77 /
+# TSG-034: one dropped packet must not fail a gate); the older lines will follow
+# when MIN-77 lands rather than widening this change.
+echo "== kind ${KIND_VERSION} =="
+curl -fsSL --retry 3 -o kind \
+  "https://github.com/kubernetes-sigs/kind/releases/download/v${KIND_VERSION}/kind-linux-amd64"
+sudo install -m 0755 kind "${BIN_DIR}/kind"
+
+# Same k8s minor as the kind node image and the cluster's k3s (v1.31) — kubectl
+# supports ±1 minor skew, so matching removes the question instead of answering it.
+echo "== kubectl ${KUBECTL_VERSION} =="
+curl -fsSL --retry 3 -o kubectl \
+  "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+sudo install -m 0755 kubectl "${BIN_DIR}/kubectl"
+
 echo
 echo "== installed =="
 helm version --short
@@ -76,3 +94,5 @@ kubeconform -v
 # comment beginning `# shellcheck ...` is parsed as a DIRECTIVE, and this one
 # tripped SC1072/SC1073 in its first draft.)
 kyverno version
+kind version
+kubectl version --client

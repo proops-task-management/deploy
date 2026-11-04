@@ -13,6 +13,12 @@
 # reaches the cluster is a merge to main — a convenience alias that bypasses
 # that is drift by construction, and Argo's selfHeal would revert it anyway
 # while you wondered why (IRD-017 §Rules).
+#
+# THE ONE APPARENT EXCEPTION, and why it is not one: `task appset` (MIN-79)
+# runs `kubectl apply` — against a throwaway kind cluster it CREATES and
+# DELETES itself, through an isolated kubeconfig in a temp dir. It never reads
+# or targets your current context, so it cannot reach the real cluster. It is a
+# test harness for the ApplicationSet controller, not a delivery path.
 
 version: "3"
 
@@ -51,6 +57,15 @@ tasks:
       # has already been burned by twice in one day.
       - ./scripts/policy-check.sh
       - rm -rf rendered
+
+  appset:
+    # Needs Docker running + `brew install kind kubectl helm`; takes ~2 min.
+    desc: Evaluate the ApplicationSet with Argo CD's own controller in a throwaway kind cluster
+    cmds:
+      # The SAME script deploy-pr-opened.yml's `appset-eval` job runs. Pins
+      # (Argo CD chart, kind node image) are read from that workflow's env
+      # block, so this task never carries a second copy of a version.
+      - ./scripts/appset-eval.sh
 
   chart-lint:
     desc: Lint the shared app chart only (template syntax + Chart.yaml validity)
