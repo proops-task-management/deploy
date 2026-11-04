@@ -1,0 +1,3 @@
+# >>> MIN-73 AC-5 PLANT — TEMPORARY, MUST BE REVERTED BEFORE MERGE <<<
+resources:
+  - pod.yaml

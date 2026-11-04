@@ -1,0 +1,15 @@
+# >>> MIN-73 AC-5 PLANT — TEMPORARY, MUST BE REVERTED BEFORE MERGE <<<
+# A deliberately non-compliant Pod to prove IRD-021 gate #6 (trivy-config, Block) fails on a
+# HIGH misconfig. `privileged: true` is Trivy check KSV-0017 (HIGH). It sits in a kustomize
+# target so render-all.sh discovers it exactly as it would a real manifest — the plant travels
+# the same path production manifests do. The `policy` (Kyverno) job is EXPECTED to fail too.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: planted-privileged
+spec:
+  containers:
+    - name: c
+      image: ghcr.io/proops-task-management/planted:v1
+      securityContext:
+        privileged: true
