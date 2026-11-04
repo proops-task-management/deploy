@@ -1,0 +1,76 @@
+# DEPRECATION: see the note in disallow-latest-tag.yaml — kyverno.io/v1
+# ClusterPolicy is deprecated as of 1.19; migration to policies.kyverno.io
+# ValidatingPolicy is MIN-71, deliberately a separate change.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-probes
+  annotations:
+    policies.kyverno.io/title: Require liveness and readiness probes
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Every container of every Deployment must declare BOTH a livenessProbe and
+      a readinessProbe. IRD-021 §Kyverno policy set / CLAUDE.md ALWAYS #7.
+      Without readiness, a rolling update sends traffic to pods that cannot
+      serve yet; without liveness, a deadlocked process is never restarted.
+      The app chart (charts/app) hardcodes both probes, so our services pass BY
+      CONSTRUCTION — this policy exists for manifests that do not come from it.
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  # Audit until D17 (MIN-21), same reasoning as disallow-latest-tag.
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-liveness-and-readiness
+      # Deployment, NOT Pod — deliberately. A Pod match would autogen onto Jobs
+      # and CronJobs (e.g. the D15 backup CronJob), which run to completion and
+      # have nothing to probe. IRD-021 scopes this rule to Deployments.
+      #
+      # SCOPE DECISION (MIN-73 Q1, 2026-11-04): IRD-021 says "Deployments in env
+      # namespaces". We match ALL Deployments and exclude the system namespaces
+      # below, rather than allow-listing dev/staging/prod: rendered manifests
+      # carry no metadata.namespace (charts/app omits it by Helm convention —
+      # TSG-032), so an allow-list would match NOTHING in the CI `policy` job and
+      # the gate would be green while checking nothing.
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+      # IRD-021 §Rollout exclusions — one comment per namespace, per the IRD.
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                # k3s's own system components (CoreDNS, Traefik, metrics-server,
+                # local-path-provisioner) — shipped and managed by k3s, not by
+                # this repo; we cannot change their manifests.
+                - kube-system
+                # Argo CD / ESO / Kyverno internals — upstream charts that
+                # legitimately deviate; blocking them would break the very
+                # controllers that deliver and enforce everything else.
+                - platform
+                # Prometheus / Loki / Tempo / Grafana / Alertmanager — upstream
+                # charts legitimately deviate (e.g. node-exporter needs host access).
+                - monitoring
+      validate:
+        message: >-
+          Every container must declare both livenessProbe and readinessProbe
+          (IRD-021 require-probes).
+        # foreach + key-presence rather than a `pattern:` on probe fields: a
+        # pattern would have to name a sub-field (periodSeconds, httpGet, ...),
+        # and the CLI performs no API-server defaulting — so a valid probe that
+        # relies on a defaulted field would be falsely reported. Checking that
+        # the key EXISTS is exactly the rule's essence and nothing more.
+        foreach:
+          - list: "request.object.spec.template.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: livenessProbe
+                    operator: AllNotIn
+                    value: "{{ element.keys(@) }}"
+                  - key: readinessProbe
+                    operator: AllNotIn
+                    value: "{{ element.keys(@) }}"

@@ -1,0 +1,77 @@
+# DEPRECATION: see the note in disallow-latest-tag.yaml — kyverno.io/v1
+# ClusterPolicy is deprecated as of 1.19; migration to policies.kyverno.io
+# ValidatingPolicy is MIN-71, deliberately a separate change (MIN-73 adds this
+# rule first so MIN-71 migrates the complete set once).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resources
+  annotations:
+    policies.kyverno.io/title: Require resource requests and limits
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Every container must declare resources.requests AND resources.limits for
+      both cpu and memory. IRD-021 §Kyverno policy set / CLAUDE.md ALWAYS #7.
+      Without requests the scheduler places pods blind on 4 GB nodes; without
+      limits one runaway container starves every neighbour on the node. The app
+      chart (charts/app) renders resources from each service's values file, so
+      our services pass BY CONSTRUCTION — this policy exists for what does NOT
+      come from that chart: an upstream infra chart's defaults (D13/D14), a
+      hand-written debug Deployment, a future service onboarded in a hurry.
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  # Audit until D17 (MIN-21), same reasoning as disallow-latest-tag. The CI
+  # `policy` job reports violations regardless of this field.
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-requests-and-limits
+      # Matching Pod is enough: Kyverno auto-generates the equivalent rule for
+      # Deployment / StatefulSet / DaemonSet / Job / CronJob (autogen), so the
+      # PR gate catches it on the rendered Deployment, not only at pod admission.
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      # IRD-021 §Rollout exclusions — one comment per namespace, per the IRD.
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                # k3s's own system components (CoreDNS, Traefik, metrics-server,
+                # local-path-provisioner) — shipped and managed by k3s, not by
+                # this repo; we cannot change their manifests.
+                - kube-system
+                # Argo CD / ESO / Kyverno internals — upstream charts that
+                # legitimately deviate; blocking them would break the very
+                # controllers that deliver and enforce everything else.
+                - platform
+                # Prometheus / Loki / Tempo / Grafana / Alertmanager — upstream
+                # charts legitimately deviate (e.g. node-exporter needs host access).
+                - monitoring
+      validate:
+        message: >-
+          Every container must set resources.requests and resources.limits for
+          both cpu and memory (IRD-021 require-resources).
+        pattern:
+          spec:
+            # `=( )` is Kyverno's conditional anchor: initContainers is checked
+            # only if present. Ordinary containers are always checked.
+            =(initContainers):
+              - resources:
+                  requests:
+                    cpu: "?*"
+                    memory: "?*"
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
+            containers:
+              - resources:
+                  requests:
+                    cpu: "?*"
+                    memory: "?*"
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
