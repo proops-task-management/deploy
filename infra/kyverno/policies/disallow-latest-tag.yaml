@@ -45,6 +45,25 @@ spec:
           - resources:
               kinds:
                 - Pod
+      # IRD-021 §Rollout exclusions — one comment per namespace, per the IRD.
+      # Written ONCE as a YAML anchor (&system-namespaces) and reused by every
+      # later rule in this file via the alias (*system-namespaces): the list and
+      # its reasons cannot drift between rules of the same policy.
+      exclude: &system-namespaces
+        any:
+          - resources:
+              namespaces:
+                # k3s's own system components (CoreDNS, Traefik, metrics-server,
+                # local-path-provisioner) — shipped and managed by k3s, not by
+                # this repo; we cannot change their manifests.
+                - kube-system
+                # Argo CD / ESO / Kyverno internals — upstream charts that
+                # legitimately deviate; blocking them would break the very
+                # controllers that deliver and enforce everything else.
+                - platform
+                # Prometheus / Loki / Tempo / Grafana / Alertmanager — upstream
+                # charts legitimately deviate (e.g. node-exporter needs host access).
+                - monitoring
       validate:
         message: "An image tag is required — an untagged image resolves to :latest."
         pattern:
@@ -58,6 +77,7 @@ spec:
           - resources:
               kinds:
                 - Pod
+      exclude: *system-namespaces   # same IRD-021 exclusions, reasons above
       validate:
         message: "Using the :latest tag is not allowed — reference the immutable SHA the overlay sets."
         pattern:

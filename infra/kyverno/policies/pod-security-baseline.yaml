@@ -4,7 +4,12 @@
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: require-pod-hardening
+  # Named per IRD-021 §Kyverno policy set. D12 (MIN-16) shipped this as
+  # `require-pod-hardening` — a name coined without reading the IRD, which had
+  # decided `pod-security-baseline` in July. Renamed in MIN-73: a policy the
+  # docs call by one name and the cluster by another is a search that fails
+  # during an incident.
+  name: pod-security-baseline
   annotations:
     policies.kyverno.io/title: Require hardened pod security
     policies.kyverno.io/category: Pod Security
@@ -33,6 +38,25 @@ spec:
           - resources:
               kinds:
                 - Pod
+      # IRD-021 §Rollout exclusions — one comment per namespace, per the IRD.
+      # Written ONCE as a YAML anchor (&system-namespaces) and reused by every
+      # later rule in this file via the alias (*system-namespaces): the list and
+      # its reasons cannot drift between rules of the same policy.
+      exclude: &system-namespaces
+        any:
+          - resources:
+              namespaces:
+                # k3s's own system components (CoreDNS, Traefik, metrics-server,
+                # local-path-provisioner) — shipped and managed by k3s, not by
+                # this repo; we cannot change their manifests.
+                - kube-system
+                # Argo CD / ESO / Kyverno internals — upstream charts that
+                # legitimately deviate; blocking them would break the very
+                # controllers that deliver and enforce everything else.
+                - platform
+                # Prometheus / Loki / Tempo / Grafana / Alertmanager — upstream
+                # charts legitimately deviate (e.g. node-exporter needs host access).
+                - monitoring
       validate:
         message: "runAsNonRoot must be true (pod or every container)."
         anyPattern:
@@ -50,6 +74,7 @@ spec:
           - resources:
               kinds:
                 - Pod
+      exclude: *system-namespaces   # same IRD-021 exclusions, reasons above
       validate:
         message: "Every container must drop ALL capabilities."
         pattern:
@@ -66,6 +91,7 @@ spec:
           - resources:
               kinds:
                 - Pod
+      exclude: *system-namespaces   # same IRD-021 exclusions, reasons above
       validate:
         message: "allowPrivilegeEscalation must be false on every container."
         pattern:
@@ -80,6 +106,7 @@ spec:
           - resources:
               kinds:
                 - Pod
+      exclude: *system-namespaces   # same IRD-021 exclusions, reasons above
       validate:
         message: "seccompProfile.type must be RuntimeDefault (pod or every container)."
         anyPattern:
